@@ -1,4 +1,4 @@
-# Yunlong Link — Deployment Guide
+# YunLongLink — Deployment Guide
 
 ## Architecture
 
@@ -7,7 +7,9 @@ Clients (v2rayNG / Shadowrocket / Nekoray)
     │
     ├─ HTTPS ──► Central Server (api.yunlonglink.com)
     │               ├─ FastAPI + SQLite
-    │               ├─ nginx (TLS termination)
+    │               ├─ Admin UI  (/ui)
+    │               ├─ REST API  (/admin/*, /client/*, /node/*)
+    │               ├─ nginx (TLS termination + rate limiting)
     │               └─ quota-cron (hourly expiry check)
     │
     └─ VLESS+Reality ──► VPC Nodes (any region)
@@ -19,159 +21,253 @@ Clients (v2rayNG / Shadowrocket / Nekoray)
 
 ## Step 1 — Central Server
 
-Pick any Ubuntu 22.04 VPS (Hetzner CX22 ~$4/mo is fine).
+Pick any Ubuntu 22.04 VPS (Hetzner CX22 ~$4/mo is fine for the control plane).
+
+### 1.1 Install Docker
 
 ```bash
-# Install Docker
 curl -fsSL https://get.docker.com | bash
+```
 
-# Clone project
-git clone https://github.com/yourname/yunlonglink.git
+### 1.2 Clone and configure
+
+```bash
+git clone https://github.com/kashifakramCH/yunlonglink.git
 cd yunlonglink/central
 
-# Set secrets
 cp .env.example .env
-nano .env          # fill in ADMIN_SECRET and NODE_API_SECRET
+nano .env
+```
 
-# Point api.yunlonglink.com DNS A record to this server's IP first, then:
+Fill in all three secrets in `.env`:
+
+```env
+ADMIN_SECRET=<long random string>       # protects /admin/* REST endpoints and admin UI login
+NODE_API_SECRET=<long random string>    # shared with every node agent
+SECRET_KEY=<long random string>         # signs the admin UI browser session cookie
+```
+
+Generate random values with: `openssl rand -hex 32`
+
+### 1.3 Update nginx config
+
+Edit `nginx/default.conf` and replace `api.yunlonglink.com` with your actual domain if different.
+
+### 1.4 Get TLS certificate
+
+Point your domain's DNS A record to this server's IP **first**, then:
+
+```bash
 ./scripts/setup-ssl.sh api.yunlonglink.com admin@yunlonglink.com
+```
 
-# Start all services
+### 1.5 Start all services
+
+```bash
 docker compose up -d
+```
 
-# Initialize database and create packages
+Verify everything is running:
+
+```bash
+docker compose ps
+# api, nginx, certbot, quota-cron should all show "Up"
+```
+
+### 1.6 Initialize the database
+
+```bash
 docker compose exec api python admin_cli.py init
-docker compose exec api python admin_cli.py add-package "5GB Daily"    5  1  2.99 daily
-docker compose exec api python admin_cli.py add-package "15GB Monthly" 15 30 9.99 monthly
 ```
 
 ---
 
-## Step 2 — VPC Node (repeat for each server)
+## Step 2 — Admin Panel
 
-Pick a server in the desired region. Vultr, Hetzner, DigitalOcean all work.
+The web admin panel is available at:
+
+```
+https://api.yunlonglink.com/ui
+```
+
+Log in with the `ADMIN_SECRET` value from your `.env` file.
+
+### Create packages via the UI
+
+Go to **Packages → New Package** and create your plans, for example:
+
+| Name | Data | Duration | Price |
+|---|---|---|---|
+| 5GB Daily | 5 GB | 1 day | $2.99 |
+| 15GB Monthly | 15 GB | 30 days | $9.99 |
+| 50GB Monthly | 50 GB | 30 days | $24.99 |
+
+---
+
+## Step 3 — VPC Nodes (repeat for each server)
+
+Pick a server in the target region. Vultr High Frequency, Hetzner, and DigitalOcean all work well. **Check that the IP is not already blocked** in your target country before buying.
+
+### 3.1 On the node server — generate Reality keys
 
 ```bash
-# On the NODE server:
-
 # Install Docker
 curl -fsSL https://get.docker.com | bash
 
 # Clone project
-git clone https://github.com/yourname/yunlonglink.git
+git clone https://github.com/kashifakramCH/yunlonglink.git
 cd yunlonglink/node
 
-# Generate Reality key pair
+# Generate Reality key pair (run once per node)
 docker run --rm teddysun/xray xray x25519
-# → Private key: <SAVE THIS — goes in config.json only, never share>
-# → Public key:  <give this to the central server admin>
+# → Private key: <SAVE THIS — goes in config.json only, NEVER share>
+# → Public key:  <give this to the admin UI when registering the node>
 
 # Generate a short ID
 openssl rand -hex 8
 # → e.g. a1b2c3d4
 ```
 
-Back on the **central server**:
+### 3.2 Register the node in the admin UI
+
+Go to **Nodes → Add Node** in the admin panel and fill in:
+
+- **Name**: e.g. `US East`
+- **Host / IP**: the node's public IP
+- **Port**: `443`
+- **Agent Port**: `8080`
+- **Reality Public Key**: from the `xray x25519` output above
+- **Short ID**: from `openssl rand -hex 8`
+- **SNI**: leave as `www.microsoft.com` (or any popular HTTPS site)
+
+After saving, a flash message shows the `NODE_ID` and `NODE_SECRET` — **copy these immediately**.
+
+### 3.3 Generate the xray config
+
+On the **central server**, run:
 
 ```bash
 cd yunlonglink/central
-
-# Register the node — prints NODE_ID and NODE_SECRET
-docker compose exec api python admin_cli.py add-node \
-  "US East" \
-  "NODE_PUBLIC_IP" \
-  "PUBLIC_KEY_FROM_ABOVE" \
-  "SHORT_ID_FROM_ABOVE"
-
-# Generate xray config.json for the node
-docker compose exec api python admin_cli.py gen-xray-config NODE_ID_SHORT
-# Copy the JSON output → save as node/config/config.json on the node server
-# Replace REPLACE_WITH_PRIVATE_KEY with the actual private key
+docker compose exec api python admin_cli.py gen-xray-config <NODE_ID_SHORT>
 ```
 
-Back on the **node server**:
+Copy the JSON output. On the **node server**, save it:
 
 ```bash
-# Fill in the .env
+nano config/config.json
+# Paste the JSON, then replace REPLACE_WITH_PRIVATE_KEY with the actual private key
+```
+
+### 3.4 Configure and start the node
+
+```bash
 cp .env.example .env
 nano .env
-# Set:
-#   CENTRAL_API_URL=https://api.yunlonglink.com
-#   NODE_ID=<from add-node output>
-#   NODE_SECRET=<from add-node output>
+```
 
-# Paste the generated config.json
-nano config/config.json   # replace REPLACE_WITH_PRIVATE_KEY
+Set:
 
-# Start xray + agent
+```env
+CENTRAL_API_URL=https://api.yunlonglink.com
+NODE_ID=<from admin UI flash message>
+NODE_SECRET=<from admin UI flash message>
+```
+
+Start the node:
+
+```bash
 docker compose up -d
+```
 
-# Firewall — CRITICAL
-ufw allow 22/tcp
-ufw allow 443/tcp
-ufw allow from CENTRAL_SERVER_IP to any port 8080
+### 3.5 Firewall — critical
+
+```bash
+ufw allow 22/tcp                                      # SSH
+ufw allow 443/tcp                                     # Xray — public
+ufw allow from <CENTRAL_SERVER_IP> to any port 8080   # Agent API — central only
 ufw enable
 ```
 
----
-
-## Step 3 — Add users and assign packages
-
-All commands run on the central server:
-
-```bash
-alias adm="docker compose -f ~/yunlonglink/central/docker-compose.yml exec api python admin_cli.py"
-
-# Create a user
-adm add-user johndoe john@example.com secretpassword
-
-# List packages to get package ID
-adm list-packages
-
-# Activate user after payment
-adm assign USER_ID_SHORT PACKAGE_ID_SHORT
-
-# Check all users
-adm users
-
-# Renew after next payment
-adm renew USER_ID_SHORT
-
-# Manually suspend
-adm block USER_ID_SHORT
-```
+The node will now appear as **Online** in the admin panel.
 
 ---
 
-## Step 4 — Client connection
+## Step 4 — Managing Users
 
-Clients call this endpoint to get their connection links:
+Everything is done through the admin panel at `https://api.yunlonglink.com/ui`.
+
+| Action | Where |
+|---|---|
+| Create a user | Users → New User |
+| Assign package after payment | Users → Actions → Assign Package |
+| Renew after next payment | Users → Actions → Renew |
+| Suspend a user | Users → Actions → Suspend |
+| Reactivate a user | Users → Actions → Unblock |
+
+Quotas are enforced automatically — when a user exhausts their data or their period expires, their account is blocked and access is removed from all nodes within 60 seconds.
+
+---
+
+## Step 5 — Client Connection
+
+When a user's account is active, they get their connection links from:
 
 ```
 GET https://api.yunlonglink.com/client/{user_id}/links
 ```
 
-Returns `vless://` links for every active node. The user imports these into:
+This returns a `vless://` link for every active node. Users import the link into:
+
 - **Android**: v2rayNG
 - **iOS**: Shadowrocket
-- **Desktop**: Nekoray or Hiddify
+- **Desktop (Windows/Linux/Mac)**: Nekoray or Hiddify
+
+Check connection status and remaining quota:
+
+```
+GET https://api.yunlonglink.com/client/{user_id}/status
+```
 
 ---
 
-## Adding more nodes later
+## Adding More Nodes Later
 
-Just repeat Step 2 on a new server. No changes to the central server needed — the new node appears automatically in client link responses.
+Repeat Step 3 on a new server. No changes to the central server are needed — the new node appears automatically in all client link responses as soon as it is registered and enabled.
 
 ---
 
 ## Monitoring
 
 ```bash
-# Central server logs
-docker compose logs -f api
-docker compose logs -f quota-cron
+# Central server
+docker compose logs -f api          # API + UI logs
+docker compose logs -f quota-cron   # Hourly expiry checks
+docker compose logs -f nginx        # Nginx access/error logs
 
-# Node logs
-docker compose logs -f xray
-docker compose logs -f agent
+# Node server
+docker compose logs -f xray         # Xray-core logs
+docker compose logs -f agent        # Usage reporting + user sync logs
 ```
+
+---
+
+## Updating
+
+```bash
+# Pull latest code and rebuild
+git pull
+docker compose build --no-cache
+docker compose up -d
+```
+
+---
+
+## Recommended VPS Providers
+
+| Role | Provider | Notes |
+|---|---|---|
+| Central server | Hetzner CX22 (~$4/mo) | Low traffic, any region |
+| US nodes | Vultr High Frequency (NY/LA) | Clean IPs, low latency |
+| EU nodes | Hetzner FSN / HEL | Fast, cheap bandwidth |
+| Asia nodes | Vultr Tokyo / Singapore | Good regional connectivity |
+| Censored-region nodes | Any unblocked provider | Always test IP before selling access |
