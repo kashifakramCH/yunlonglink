@@ -10,7 +10,7 @@ High-performance, censorship-resistant VPN service powered by **Xray-core** with
 - **Multi-region nodes** — deploy VPC nodes in any region; clients get links for all active nodes automatically
 - **Web admin panel** — manage users, packages, and nodes from a browser at `/ui`
 - **Flexible packages** — daily, weekly, monthly, or custom data plans with configurable limits and pricing
-- **Automatic quota enforcement** — accounts are blocked the moment data or time runs out; access removed from all nodes within 60 seconds
+- **Automatic quota enforcement** — accounts are blocked when data or time runs out; node access is removed within 60 seconds
 - **Admin renewal workflow** — only admins can renew after payment is confirmed
 - **Client-ready links** — generates `vless://` deep-links importable into any Xray-compatible client app
 - **Fully Dockerized** — spin up a central server and add nodes with `docker compose up`
@@ -45,7 +45,7 @@ Client App  ──VLESS+Reality──►  VPC Node (xray-core)
 |---|---|
 | VPN Protocol | Xray-core — VLESS + Reality |
 | Backend | Python, FastAPI, SQLAlchemy |
-| Database | SQLite (upgradeable to PostgreSQL) |
+| Database | SQLite |
 | Admin UI | Jinja2 templates + Bootstrap 5 |
 | Node Agent | FastAPI + httpx + schedule |
 | Deployment | Docker, Docker Compose, nginx, Let's Encrypt |

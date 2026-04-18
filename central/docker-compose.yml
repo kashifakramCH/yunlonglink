@@ -27,9 +27,16 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx:/opt/yunlonglink/nginx:ro
       - certbot-certs:/etc/letsencrypt:ro
       - certbot-www:/var/www/certbot:ro
+    command: >
+      /bin/sh -c "if find /etc/letsencrypt/live -mindepth 2 -maxdepth 2 -name fullchain.pem | grep -q .; then
+        cp /opt/yunlonglink/nginx/default.conf /etc/nginx/conf.d/default.conf;
+      else
+        cp /opt/yunlonglink/nginx/bootstrap.conf /etc/nginx/conf.d/default.conf;
+      fi &&
+      exec nginx -g 'daemon off;'"
     depends_on:
       - api
     networks:
@@ -55,7 +62,7 @@ services:
       - vpn-data:/app/data
     networks:
       - vpn-net
-    # Check for expired packages every hour
+    # Check for expired packages every 60 seconds
     command: >
       sh -c "while true; do
         python -c \"
@@ -66,7 +73,7 @@ check_all_expiries(db)
 db.close()
 print('Quota expiry check complete')
 \";
-        sleep 3600;
+        sleep 60;
       done"
 
 volumes:

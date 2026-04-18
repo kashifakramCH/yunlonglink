@@ -43,9 +43,19 @@ def require_admin(x_admin_secret: str = Header(...)):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
 
-def require_node(x_secret: str = Header(...)):
-    if x_secret != NODE_API_SECRET:
-        raise HTTPException(status_code=403, detail="Invalid node secret")
+def require_node_report_secret(db: Session, node_id: str, x_secret: str):
+    node = db.query(VPCNode).filter(VPCNode.id == node_id).first()
+    if not node:
+        raise HTTPException(status_code=403, detail="Invalid node")
+
+    if secrets_module.compare_digest(x_secret, node.api_secret):
+        return node
+
+    # Backward-compatible fallback for deployments that still use the shared secret.
+    if secrets_module.compare_digest(x_secret, NODE_API_SECRET):
+        return node
+
+    raise HTTPException(status_code=403, detail="Invalid node secret")
 
 
 # ─── Admin: User management ──────────────────────────────────────────────────
@@ -324,8 +334,13 @@ class UsageReport(BaseModel):
     node_id: str
 
 
-@app.post("/node/usage", dependencies=[Depends(require_node)])
-def report_usage(report: UsageReport, db: Session = Depends(get_db)):
+@app.post("/node/usage")
+def report_usage(
+    report: UsageReport,
+    x_secret: str = Header(...),
+    db: Session = Depends(get_db),
+):
+    require_node_report_secret(db, report.node_id, x_secret)
     user = db.query(User).filter(User.username == report.user_email).first()
     if not user:
         return {"ok": False, "reason": "user_not_found"}

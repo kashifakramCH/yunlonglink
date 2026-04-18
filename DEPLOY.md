@@ -10,7 +10,7 @@ Clients (v2rayNG / Shadowrocket / Nekoray)
     │               ├─ Admin UI  (/ui)
     │               ├─ REST API  (/admin/*, /client/*, /node/*)
     │               ├─ nginx (TLS termination + rate limiting)
-    │               └─ quota-cron (hourly expiry check)
+    │               └─ quota-cron (60-second expiry check)
     │
     └─ VLESS+Reality ──► VPC Nodes (any region)
                             ├─ xray-core (port 443)
@@ -43,7 +43,7 @@ Fill in all three secrets in `.env`:
 
 ```env
 ADMIN_SECRET=<long random string>       # protects /admin/* REST endpoints and admin UI login
-NODE_API_SECRET=<long random string>    # shared with every node agent
+NODE_API_SECRET=<long random string>    # optional shared fallback for node usage reports
 SECRET_KEY=<long random string>         # signs the admin UI browser session cookie
 ```
 
@@ -60,6 +60,8 @@ Point your domain's DNS A record to this server's IP **first**, then:
 ```bash
 ./scripts/setup-ssl.sh api.yunlonglink.com admin@yunlonglink.com
 ```
+
+On a fresh install, the script boots nginx in temporary HTTP-only mode for the ACME challenge, then restarts it with the full HTTPS config after the certificate is issued.
 
 ### 1.5 Start all services
 
@@ -141,6 +143,7 @@ Go to **Nodes → Add Node** in the admin panel and fill in:
 - **SNI**: leave as `www.microsoft.com` (or any popular HTTPS site)
 
 After saving, a flash message shows the `NODE_ID` and `NODE_SECRET` — **copy these immediately**.
+That per-node `NODE_SECRET` is used both for central callbacks to the node and for the node's `/node/usage` reports back to central.
 
 ### 3.3 Generate the xray config
 
@@ -241,7 +244,7 @@ Repeat Step 3 on a new server. No changes to the central server are needed — t
 ```bash
 # Central server
 docker compose logs -f api          # API + UI logs
-docker compose logs -f quota-cron   # Hourly expiry checks
+docker compose logs -f quota-cron   # 60-second expiry checks
 docker compose logs -f nginx        # Nginx access/error logs
 
 # Node server

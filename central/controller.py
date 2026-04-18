@@ -10,6 +10,13 @@ pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # ─── User management ────────────────────────────────────────────────────────
 
+def _run_node_sync(coro, error_prefix: str):
+    try:
+        asyncio.run(coro)
+    except Exception as e:
+        print(f"{error_prefix}: {e}")
+
+
 def create_user(db: Session, username: str, email: str, password: str) -> User:
     user = User(
         username=username,
@@ -38,14 +45,7 @@ def assign_package(db: Session, user_id: str, package_id: str) -> User:
     db.commit()
     db.refresh(user)
 
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(_push_config_all_nodes(db, user))
-        else:
-            loop.run_until_complete(_push_config_all_nodes(db, user))
-    except Exception as e:
-        print(f"[controller] Could not push config to nodes: {e}")
+    _run_node_sync(_push_config_all_nodes(db, user), "[controller] Could not push config to nodes")
 
     return user
 
@@ -65,14 +65,7 @@ def renew_package(db: Session, user_id: str) -> User:
     db.commit()
     db.refresh(user)
 
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(_push_config_all_nodes(db, user))
-        else:
-            loop.run_until_complete(_push_config_all_nodes(db, user))
-    except Exception as e:
-        print(f"[controller] Could not push config to nodes: {e}")
+    _run_node_sync(_push_config_all_nodes(db, user), "[controller] Could not push config to nodes")
 
     return user
 
@@ -83,14 +76,10 @@ def unblock_user(db: Session, user_id: str) -> User:
         raise ValueError("User not found")
     user.status = UserStatus.ACTIVE
     db.commit()
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(_push_config_all_nodes(db, user))
-        else:
-            loop.run_until_complete(_push_config_all_nodes(db, user))
-    except Exception as e:
-        print(f"[controller] Could not push config to nodes on unblock: {e}")
+    _run_node_sync(
+        _push_config_all_nodes(db, user),
+        "[controller] Could not push config to nodes on unblock",
+    )
     return user
 
 
@@ -101,14 +90,7 @@ def block_user(db: Session, user_id: str, reason: UserStatus = UserStatus.BLOCKE
     user.status = reason
     db.commit()
 
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(_remove_user_all_nodes(db, user))
-        else:
-            loop.run_until_complete(_remove_user_all_nodes(db, user))
-    except Exception as e:
-        print(f"[controller] Could not remove user from nodes: {e}")
+    _run_node_sync(_remove_user_all_nodes(db, user), "[controller] Could not remove user from nodes")
 
     return user
 
@@ -145,18 +127,14 @@ def record_usage(db: Session, user_id: str, node_id: str, bytes_up: int, bytes_d
     db.commit()
 
     if should_block:
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.ensure_future(_remove_user_all_nodes(db, user))
-            else:
-                loop.run_until_complete(_remove_user_all_nodes(db, user))
-        except Exception as e:
-            print(f"[controller] Could not remove user after quota exceeded: {e}")
+        _run_node_sync(
+            _remove_user_all_nodes(db, user),
+            "[controller] Could not remove user after quota exceeded",
+        )
 
 
 def check_all_expiries(db: Session):
-    """Run periodically (every hour) to catch expired periods."""
+    """Run periodically (every minute) to catch expired periods."""
     now = datetime.utcnow()
     expired = db.query(User).filter(
         User.status == UserStatus.ACTIVE,
@@ -166,6 +144,10 @@ def check_all_expiries(db: Session):
         user.status = UserStatus.BLOCKED
     db.commit()
     if expired:
+        _run_node_sync(
+            _remove_users_all_nodes(db, expired),
+            "[controller] Could not remove expired users from nodes",
+        )
         print(f"[quota] Blocked {len(expired)} expired users")
 
 
@@ -173,6 +155,8 @@ def check_all_expiries(db: Session):
 
 async def _push_config_all_nodes(db: Session, user: User):
     nodes = db.query(VPCNode).filter(VPCNode.is_active == True).all()
+    if not nodes:
+        return
     async with httpx.AsyncClient(timeout=10) as client:
         for node in nodes:
             try:
@@ -186,14 +170,21 @@ async def _push_config_all_nodes(db: Session, user: User):
 
 
 async def _remove_user_all_nodes(db: Session, user: User):
+    await _remove_users_all_nodes(db, [user])
+
+
+async def _remove_users_all_nodes(db: Session, users: list[User]):
     nodes = db.query(VPCNode).filter(VPCNode.is_active == True).all()
+    if not nodes or not users:
+        return
     async with httpx.AsyncClient(timeout=10) as client:
-        for node in nodes:
-            try:
-                await client.post(
-                    f"http://{node.host}:{node.api_port}/remove_user",
-                    json={"uuid": user.xray_uuid},
-                    headers={"X-Secret": node.api_secret},
-                )
-            except Exception as e:
-                print(f"[node] Failed to remove from {node.name}: {e}")
+        for user in users:
+            for node in nodes:
+                try:
+                    await client.post(
+                        f"http://{node.host}:{node.api_port}/remove_user",
+                        json={"uuid": user.xray_uuid},
+                        headers={"X-Secret": node.api_secret},
+                    )
+                except Exception as e:
+                    print(f"[node] Failed to remove {user.username} from {node.name}: {e}")
