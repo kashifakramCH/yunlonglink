@@ -1,16 +1,34 @@
 from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+from starlette.middleware.sessions import SessionMiddleware
 from database import get_db, User, Package, VPCNode, UserStatus, PackageType, init_db
 import controller
 import xray_config
 import os
 import secrets as secrets_module
+from ui_routes import router as ui_router
 
 app = FastAPI(title="Yunlong Link API", version="1.0.0")
 
 ADMIN_SECRET    = os.environ.get("ADMIN_SECRET", "change-me-in-production")
 NODE_API_SECRET = os.environ.get("NODE_API_SECRET", "node-secret-change-me")
+SECRET_KEY      = os.environ.get("SECRET_KEY", "change-this-session-secret")
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SECRET_KEY,
+    session_cookie="yunlonglink_admin",
+    max_age=3600 * 8,   # 8-hour session
+)
+
+app.include_router(ui_router)
+
+
+@app.get("/", include_in_schema=False)
+def root():
+    return RedirectResponse(url="/ui/dashboard")
 
 
 @app.on_event("startup")

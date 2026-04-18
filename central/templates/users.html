@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+{% set active_page = "users" %}
+
+{% block title %}Users — YunLongLink{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <div>
+    <h4 class="mb-0 fw-semibold text-light">Users</h4>
+    <small class="text-secondary">{{ users|length }} total users</small>
+  </div>
+  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createUserModal">
+    <i class="bi bi-person-plus me-1"></i> New User
+  </button>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table mb-0">
+      <thead>
+        <tr>
+          <th class="ps-4">User</th>
+          <th>Status</th>
+          <th>Package</th>
+          <th style="width:180px;">Usage</th>
+          <th>Expires</th>
+          <th>Joined</th>
+          <th class="pe-4 text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <td class="ps-4">
+            <div class="fw-medium text-light">{{ u.username }}</div>
+            <div style="font-size:.75rem; color:#8b949e;">{{ u.email }}</div>
+          </td>
+          <td>
+            {% if u.status.value == 'active' %}
+              <span class="badge badge-active rounded-pill px-2">Active</span>
+            {% elif u.status.value == 'blocked' %}
+              <span class="badge badge-blocked rounded-pill px-2">Blocked</span>
+            {% elif u.status.value == 'suspended' %}
+              <span class="badge badge-suspended rounded-pill px-2">Suspended</span>
+            {% else %}
+              <span class="badge badge-pending rounded-pill px-2">Pending</span>
+            {% endif %}
+          </td>
+          <td class="text-secondary" style="font-size:.875rem;">{{ u.package }}</td>
+          <td>
+            {% if u.quota_gb != "0.00" %}
+              <div class="d-flex align-items-center gap-2">
+                <div class="progress flex-grow-1">
+                  <div class="progress-bar {% if u.pct >= 90 %}bg-danger{% elif u.pct >= 70 %}bg-warning{% endif %}"
+                       style="width:{{ u.pct }}%"></div>
+                </div>
+                <span style="font-size:.7rem; color:#8b949e; white-space:nowrap;">{{ u.used_gb }}/{{ u.quota_gb }} GB</span>
+              </div>
+            {% else %}
+              <span class="text-secondary" style="font-size:.8rem;">No package</span>
+            {% endif %}
+          </td>
+          <td class="text-secondary" style="font-size:.875rem;">{{ u.period_end }}</td>
+          <td class="text-secondary" style="font-size:.875rem;">{{ u.created_at }}</td>
+          <td class="pe-4 text-end">
+            <div class="dropdown">
+              <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
+                Actions
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end" style="background:#21262d; border-color:#30363d; min-width:160px;">
+                <li>
+                  <a class="dropdown-item text-light" href="#"
+                     data-bs-toggle="modal"
+                     data-bs-target="#assignModal"
+                     data-userid="{{ u.id }}"
+                     data-username="{{ u.username }}"
+                     data-pkgid="{{ u.package_id or '' }}">
+                    <i class="bi bi-box-seam me-2 text-secondary"></i> Assign Package
+                  </a>
+                </li>
+                <li>
+                  <form method="post" action="/ui/users/{{ u.id }}/renew">
+                    <button class="dropdown-item text-light" type="submit"
+                            onclick="return confirm('Renew {{ u.username }}?')">
+                      <i class="bi bi-arrow-clockwise me-2 text-secondary"></i> Renew
+                    </button>
+                  </form>
+                </li>
+                <li><hr class="dropdown-divider" style="border-color:#30363d;"></li>
+                {% if u.status.value in ('blocked', 'suspended') %}
+                <li>
+                  <form method="post" action="/ui/users/{{ u.id }}/unblock">
+                    <button class="dropdown-item text-success" type="submit">
+                      <i class="bi bi-check-circle me-2"></i> Unblock
+                    </button>
+                  </form>
+                </li>
+                {% else %}
+                <li>
+                  <form method="post" action="/ui/users/{{ u.id }}/block">
+                    <button class="dropdown-item text-danger" type="submit"
+                            onclick="return confirm('Suspend {{ u.username }}?')">
+                      <i class="bi bi-slash-circle me-2"></i> Suspend
+                    </button>
+                  </form>
+                </li>
+                {% endif %}
+              </ul>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" class="text-center text-secondary py-5">
+            <i class="bi bi-people d-block mb-2" style="font-size:2rem;"></i>
+            No users yet. Create your first user.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Create User Modal -->
+<div class="modal fade" id="createUserModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="/ui/users/create">
+        <div class="modal-header">
+          <h5 class="modal-title">New User</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label text-secondary" style="font-size:.8rem;">USERNAME</label>
+            <input type="text" name="username" class="form-control" placeholder="johndoe" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label text-secondary" style="font-size:.8rem;">EMAIL</label>
+            <input type="email" name="email" class="form-control" placeholder="john@example.com" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label text-secondary" style="font-size:.8rem;">PASSWORD</label>
+            <input type="password" name="password" class="form-control" placeholder="Temporary password" required>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create User</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Assign Package Modal -->
+<div class="modal fade" id="assignModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" id="assignForm" action="">
+        <div class="modal-header">
+          <h5 class="modal-title">Assign Package — <span id="assignUsername"></span></h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <label class="form-label text-secondary" style="font-size:.8rem;">SELECT PACKAGE</label>
+          <select name="package_id" class="form-select" required>
+            {% for p in packages %}
+            <option value="{{ p.id }}">{{ p.name }} — {{ p.duration_days }}d / ${{ "%.2f"|format(p.price) }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Assign & Activate</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+  const assignModal = document.getElementById('assignModal');
+  assignModal.addEventListener('show.bs.modal', e => {
+    const btn = e.relatedTarget;
+    document.getElementById('assignUsername').textContent = btn.dataset.username;
+    document.getElementById('assignForm').action = `/ui/users/${btn.dataset.userid}/assign`;
+  });
+</script>
+{% endblock %}

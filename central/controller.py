@@ -77,6 +77,23 @@ def renew_package(db: Session, user_id: str) -> User:
     return user
 
 
+def unblock_user(db: Session, user_id: str) -> User:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise ValueError("User not found")
+    user.status = UserStatus.ACTIVE
+    db.commit()
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.ensure_future(_push_config_all_nodes(db, user))
+        else:
+            loop.run_until_complete(_push_config_all_nodes(db, user))
+    except Exception as e:
+        print(f"[controller] Could not push config to nodes on unblock: {e}")
+    return user
+
+
 def block_user(db: Session, user_id: str, reason: UserStatus = UserStatus.BLOCKED) -> User:
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
