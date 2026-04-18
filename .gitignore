@@ -20,3 +20,4 @@ node/config/config.json
 
 # macOS
 .DS_Store
+.claude/
