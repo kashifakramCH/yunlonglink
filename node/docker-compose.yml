@@ -1,0 +1,37 @@
+services:
+
+  xray:
+    # Official lightweight xray image — or build from Dockerfile if preferred
+    image: teddysun/xray
+    container_name: vpn-xray
+    restart: unless-stopped
+    # network_mode: host is required so xray binds directly to host port 443.
+    # Without this, NAT would break the Reality handshake.
+    network_mode: host
+    volumes:
+      - ./config:/etc/xray:rw    # config.json is managed by node_agent
+    cap_add:
+      - NET_ADMIN
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+
+  agent:
+    build: .
+    container_name: vpn-agent
+    restart: unless-stopped
+    # Also use host networking so the agent can reach xray on 127.0.0.1:62789
+    network_mode: host
+    env_file: .env
+    environment:
+      - XRAY_CONFIG_PATH=/etc/xray/config.json
+      - XRAY_BIN=/usr/local/bin/xray
+      - AGENT_PORT=8080
+    volumes:
+      - ./config:/etc/xray:rw              # shared config dir with xray
+      - /var/run/docker.sock:/var/run/docker.sock  # allows SIGHUP via docker CLI
+    depends_on:
+      - xray
+    # pid: host is needed if falling back to direct SIGHUP (not via docker socket)
+    pid: "host"

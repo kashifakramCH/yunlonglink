@@ -1,0 +1,22 @@
+# Environment files — contain secrets, never commit
+.env
+central/.env
+node/.env
+
+# SQLite database
+*.db
+*.db-shm
+*.db-wal
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Xray config contains private keys — only commit config.example.json
+node/config/config.json
+
+# macOS
+.DS_Store
