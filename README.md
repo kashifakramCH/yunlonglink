@@ -4,7 +4,7 @@ High-performance, censorship-resistant VPN service powered by **Xray-core** with
 
 ---
  
-## Features
+## Feature Set
 
 - **VLESS + Reality protocol** — currently the hardest traffic type for censors to detect and block; camouflages as legitimate TLS to any major website
 - **Multi-region nodes** — deploy VPC nodes in any region; clients get links for all active nodes automatically
